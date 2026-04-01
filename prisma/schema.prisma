@@ -1,0 +1,334 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // Adjust if using MySQL, SQLite, etc.
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// Enums
+// ------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN
+  PROGRAM_MANAGER
+  REGIONAL_COORDINATOR
+  M_AND_E_OFFICER
+  DATA_VERIFIER
+  TRAINER
+  COACH
+  ENUMERATOR
+  COMM_OFFICER
+  ENTERPRISE_USER
+  READ_ONLY_STAKEHOLDER
+}
+
+enum EnterpriseStatus {
+  ACTIVE
+  STALLED
+  DROPPED_OUT
+  GRADUATED
+}
+
+enum ConsentStatus {
+  PENDING
+  GRANTED
+  DENIED
+  WITHDRAWN
+}
+
+enum FormType {
+  BASELINE
+  ASSESSMENT
+  IAP
+  COACHING_VISIT
+  TRAINING
+}
+
+enum BaselineStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum IapSignoff {
+  PENDING
+  SIGNED_BY_COACH
+  SIGNED_BY_ENTERPRISE
+  FULLY_SIGNED
+}
+
+enum QcStatus {
+  PENDING
+  PASSED
+  FAILED
+  NEEDS_REVISION
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ------------------------------------------------------
+// Models
+// ------------------------------------------------------
+
+model User {
+  id            String          @id @default(uuid())
+  email         String          @unique
+  passwordHash  String          @map("password_hash")
+  firstName     String          @map("first_name")
+  lastName      String          @map("last_name")
+  role          Role            @default(ENUMERATOR)
+  region        String?
+  isActive      Boolean         @default(true) @map("is_active")
+
+  // Relations
+  enterprises      Enterprise[]
+  coachingVisits   CoachingVisit[]
+  attendances      Attendance[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  qcChecks         QcCheck[]
+
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@index([role, region])
+  @@map("users")
+}
+
+model Enterprise {
+  id              String           @id @default(uuid())
+  businessName    String           @map("business_name")
+  contactPerson   String           @map("contact_person")
+  phoneNumber     String?          @map("phone_number")
+  region          String
+  status          EnterpriseStatus @default(ACTIVE)
+  consentStatus   ConsentStatus    @default(PENDING) @map("consent_status")
+  userId          String           @map("user_id") // ID of the assigned Enumerator/Coach/Owner
+
+  // Relations
+  user            User             @relation(fields: [userId], references: [id])
+  baselineForms   BaselineForm[]
+  assessments     Assessment[]
+  iaps            Iap[]
+  coachingVisits  CoachingVisit[]
+  attendances     Attendance[]
+
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@index([region, status])
+  @@map("enterprises")
+}
+
+model BaselineForm {
+  id           String         @id @default(uuid())
+  enterpriseId String         @map("enterprise_id")
+  status       BaselineStatus @default(DRAFT)
+  formData     Json           @map("form_data") // Stores the dynamic structure of the form answers
+
+  // Relations
+  enterprise   Enterprise     @relation(fields: [enterpriseId], references: [id])
+  qcChecks     QcCheck[]
+  evidences    Evidence[]
+
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@index([enterpriseId, status])
+  @@map("baseline_forms")
+}
+
+model Assessment {
+  id           String     @id @default(uuid())
+  enterpriseId String     @map("enterprise_id")
+  score        Float?
+  formData     Json       @map("form_data")
+
+  // Relations
+  enterprise   Enterprise @relation(fields: [enterpriseId], references: [id])
+  qcChecks     QcCheck[]
+  evidences    Evidence[]
+
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@map("assessments")
+}
+
+model Iap {
+  id             String     @id @default(uuid())
+  enterpriseId   String     @map("enterprise_id")
+  signoff        IapSignoff @default(PENDING)
+  actionItems    Json       @map("action_items")
+
+  // Relations
+  enterprise     Enterprise @relation(fields: [enterpriseId], references: [id])
+  qcChecks       QcCheck[]
+  evidences      Evidence[]
+
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  @@map("iaps") // Individual Action Plans
+}
+
+model CoachingVisit {
+  id           String     @id @default(uuid())
+  enterpriseId String     @map("enterprise_id")
+  coachId      String     @map("coach_id")
+  visitDate    DateTime   @map("visit_date")
+  notes        String?
+  status       TaskStatus @default(PENDING)
+
+  // Relations
+  enterprise   Enterprise @relation(fields: [enterpriseId], references: [id])
+  coach        User       @relation(fields: [coachId], references: [id])
+  evidences    Evidence[]
+
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@index([coachId, visitDate])
+  @@map("coaching_visits")
+}
+
+model Training {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  startDate   DateTime @map("start_date")
+  endDate     DateTime @map("end_date")
+  location    String?
+
+  // Relations
+  attendances Attendance[]
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("trainings")
+}
+
+model Attendance {
+  id           String      @id @default(uuid())
+  trainingId   String      @map("training_id")
+  enterpriseId String?     @map("enterprise_id")
+  userId       String?     @map("user_id") // E.g., for non-enterprise attendees/trainers
+  isPresent    Boolean     @default(false) @map("is_present")
+
+  // Relations
+  training     Training    @relation(fields: [trainingId], references: [id])
+  enterprise   Enterprise? @relation(fields: [enterpriseId], references: [id])
+  user         User?       @relation(fields: [userId], references: [id])
+
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  @@map("attendances")
+}
+
+model Evidence {
+  id               String    @id @default(uuid())
+  fileUrl          String    @map("file_url")
+  fileType         String    @map("file_type") // e.g., image/jpeg, application/pdf
+  description      String?
+
+  // Optional relations for polymporhic-like referencing
+  baselineFormId   String?   @map("baseline_form_id")
+  assessmentId     String?   @map("assessment_id")
+  iapId            String?   @map("iap_id")
+  coachingVisitId  String?   @map("coaching_visit_id")
+
+  // Relations
+  baselineForm     BaselineForm?  @relation(fields: [baselineFormId], references: [id])
+  assessment       Assessment?    @relation(fields: [assessmentId], references: [id])
+  iap              Iap?           @relation(fields: [iapId], references: [id])
+  coachingVisit    CoachingVisit? @relation(fields: [coachingVisitId], references: [id])
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@map("evidences")
+}
+
+model QcCheck {
+  id             String    @id @default(uuid())
+  reviewerId     String    @map("reviewer_id")
+  status         QcStatus  @default(PENDING)
+  comments       String?
+
+  // Optional relations to the form being checked
+  baselineFormId String?   @map("baseline_form_id")
+  assessmentId   String?   @map("assessment_id")
+  iapId          String?   @map("iap_id")
+
+  // Relations
+  reviewer       User          @relation(fields: [reviewerId], references: [id])
+  baselineForm   BaselineForm? @relation(fields: [baselineFormId], references: [id])
+  assessment     Assessment?   @relation(fields: [assessmentId], references: [id])
+  iap            Iap?          @relation(fields: [iapId], references: [id])
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("qc_checks")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String   // e.g., "CREATE", "UPDATE", "DELETE"
+  entityType String   @map("entity_type") // e.g., "ENTERPRISE", "BASELINE_FORM"
+  entityId   String   @map("entity_id")
+  changes    Json?    // Optional JSON representation of state changes
+
+  // Relations
+  user       User?    @relation(fields: [userId], references: [id])
+
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("notifications")
+}
+
+model SyncQueue {
+  id            String     @id @default(uuid())
+  entityType    String     @map("entity_type")
+  operation     String     // CREATE, UPDATE, DELETE
+  payload       Json
+  status        TaskStatus @default(PENDING)
+  retryCount    Int        @default(0) @map("retry_count")
+  lastError     String?    @map("last_error")
+
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  @@map("sync_queues")
+}
